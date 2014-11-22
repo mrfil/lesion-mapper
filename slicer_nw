@@ -1,0 +1,83 @@
+#!/bin/sh
+
+Usage() {
+    cat <<EOF
+slicer_nw slices images for lesion_mapper
+
+For research purposes only! Please see LICENSE.txt
+
+Nate Wetter <nwetter2@illinois.edu>
+Brad Sutton <bsutton@illinois.edu>
+Magnetic Resonance Functional Imaging Lab <mrfil.bioen.illinois.edu>
+University of Illinois at Urbana-Champaign <illinois.edu>
+
+Last updated: September 24, 2014
+
+EOF
+    exit 1
+}
+
+[ -z "$2" ] && Usage
+
+# defaults
+
+overlaycmd=""
+slices9=0
+slices45=0
+in=""
+out=""
+
+# read inputs
+
+while [ -n "$1" ]
+do
+    if [ $1 = "-overlay" ]; then
+        overlaycmd=$2
+        shift 2
+    elif [ $1 = "-9" ]; then
+        slices9=1
+        shift
+    elif [ $1 = "-45" ]; then
+        slices45=1
+        shift
+    elif [ $1 = "-in" ]; then
+        in=$2
+        shift 2
+    elif [ $1 = "-out" ]; then
+        out=$2
+        shift 2
+    fi
+done
+
+if [ -n "$overlaycmd" ]; then
+    overlay $overlaycmd
+fi
+    
+    overlay 0 0 t2_unbiased -a lesionmapT2 0.9 1.1  lesionmapT2 0.9 1.1 overlay
+    
+    midx=$(fslstats $in -C | cut -d" " -f1 | cut -d"." -f1)
+    for it in {1..18}; do
+        slicer $in -s 1 -x -`expr $it + $midx - 10` slci${it}.png
+    done
+        
+    ${FSLDIR}/bin/slicer $in -L -s 1 \
+        -x 0.3 slcx30.png -x 0.35 slcx35.png -x 0.4 slcx40.png -x 0.45 slcx45.png -x 0.5 slcx50.png -x 0.55 slcx55.png -x 0.6 slcx60.png -x 0.65 slcx65.png -x 0.7 slcx70.png \
+        -y 0.3 slcy30.png -y 0.35 slcy35.png -y 0.4 slcy40.png -y 0.45 slcy45.png -y 0.5 slcy50.png -y 0.55 slcy55.png -y 0.6 slcy60.png -y 0.65 slcy65.png -y 0.7 slcy70.png \
+        -z 0.3 slcz30.png -z 0.35 slcz35.png -z 0.4 slcz40.png -z 0.45 slcz45.png -z 0.5 slcz50.png -z 0.55 slcz55.png -z 0.6 slcz60.png -z 0.65 slcz65.png -z 0.7 slcz70.png 
+       
+    ${FSLDIR}/bin/pngappend \
+        slcx30.png + slcx35.png + slcx40.png + slcx45.png + slcx50.png + slcx55.png + slcx60.png + slcx65.png + slcx70.png - \
+        slci1.png + slci2.png + slci3.png + slci4.png + slci5.png + slci6.png + slci7.png + slci8.png + slci9.png - \
+        slci10.png + slci11.png + slci12.png + slci13.png + slci14.png + slci15.png + slci16.png + slci17.png + slci18.png - \
+        slcy30.png + slcy35.png + slcy40.png + slcy45.png + slcy50.png + slcy55.png + slcy60.png + slcy65.png + slcy70.png - \
+        slcz30.png + slcz35.png + slcz40.png + slcz45.png + slcz50.png + slcz55.png + slcz60.png + slcz65.png + slcz70.png \
+        ${out}45.png
+
+    ${FSLDIR}/bin/pngappend \
+        slcx40.png + slcx50.png + slcx60.png + \
+        slcy40.png + slcy50.png + slcy60.png + \
+        slcz40.png + slcz50.png + slcz60.png \
+        ${out}9.png
+    #/bin/rm grI?.png
+
+    rm slc*.png

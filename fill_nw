@@ -1,0 +1,70 @@
+#!/bin/sh
+
+Usage() {
+    cat <<EOF
+fill_nw - Fills enclosed portions of a mask. Iteratively dilates and masks until convergence.
+
+For research purposes only! Please see LICENSE.txt
+
+Nate Wetter <nwetter2@illinois.edu>
+Brad Sutton <bsutton@illinois.edu>
+Magnetic Resonance Functional Imaging Lab <mrfil.bioen.illinois.edu>
+University of Illinois at Urbana-Champaign <illinois.edu>
+
+Use: fill_nw <in> <mask> <out>
+
+Required parameters:
+  <in>   : Input image to be dilated.
+  <mask> : Mask with enclosed portions to be filled. Masks <in> every iteration.
+  <out>  : Output file name.
+
+Last updated: September 24, 2014
+
+EOF
+    exit 1
+}
+
+[ -z "$3" ] && Usage
+
+in=`remove_ext $1`
+mask=`remove_ext $2`
+out=`remove_ext $3`
+failed=0
+
+# verify validity of input images
+if [ `imtest $in` = 0 ]; then
+    echo "ERROR: $in (input image) is not a valid image"
+    failed=1
+fi
+if [ `imtest $mask` = 0 ]; then
+    echo "ERROR: $mask (mask image) is not a valid image"
+    failed=1
+fi
+if [ "$failed" = 1 ]; then
+    echo "Exiting"
+    exit 1
+fi
+
+# begin computation
+cluster --in=${mask} --thresh=0.5 -o ${mask}_cluster --no_table
+index_max=$(fslstats ${mask}_cluster -R | cut -d' ' -f2 | cut -d'.' -f1)
+index_cur=1
+while [ $index_cur -le $index_max ]
+do
+    echo $index_cur
+    index_prev=`expr $index_cur - 1`
+
+    fslmaths ${mask}_cluster -thr ${index_prev}.5 -uthr ${index_cur}.5 cluster_current
+    fslmaths cluster_current -mas $in cluster_current_masked
+    if [ $(fslstats cluster_current_masked -R | cut -d' ' -f2 | cut -d'.' -f1) -eq 0 ]; then
+        # remove cluster
+        #fslmaths cluster_current -binv cluster_current_inv
+        #fslmaths ${mask}_cluster -mas cluster_current_inv ${mask}_cluster
+        fslmaths ${mask}_cluster -sub cluster_current ${mask}_cluster
+        echo "cluster rejected $(fslstats cluster_current -R | cut -d' ' -f2 | cut -d'.' -f1) = $index_cur"
+    else
+        echo "cluster retained"
+    fi
+    index_cur=`expr $index_cur + 1`
+done
+immv ${mask}_cluster $out

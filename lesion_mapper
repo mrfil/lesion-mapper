@@ -1,0 +1,366 @@
+#!/bin/sh
+
+Usage() {
+    cat <<EOF
+lesion_mapper - A tool for mappping white matter hyperintensities.
+
+For research purposes only! Please see LICENSE.txt
+
+Nate Wetter <nwetter2@illinois.edu>
+Brad Sutton <bsutton@illinois.edu>
+Magnetic Resonance Functional Imaging Lab <mrfil.bioen.illinois.edu>
+University of Illinois at Urbana-Champaign <illinois.edu>
+
+Use: lesion_mapper -in <FLAIR image> [options]
+
+Required parameters:
+  -in <image> : FLAIR input image. Needs to already be skull-stripped.
+
+Options:
+  -wmthr <float> : White matter propability threshold for standard space masking.
+    Between 0 and 1. Higher numbers increase false negatives.
+    Lower numbers increase false positives. Default is 0.7.
+    Use -1 to skip this step.
+  -midline <int> : Remove lesions that are within <int> millimeters of touching
+    the saggital midline plane. Should be greater than or equal to zero.
+    If set to zero, lesions crossing the midline will be removed.
+    Default is 4. Use -1 to skip this step.
+    Will be skipped if -wmthr is skipped.
+  -midmax <int>  : Only remove parts of midline lesions that are within
+    <int> mm of midline. Should be greater than or equal to -midline.
+    Default is 9. Use -1 to skip this constraint and allow all lesions
+    contiguous with those selected via -midline to be removed.
+  -no2fast : Skip secondary fast step. Results should be more sensitive and
+    less specific.
+  -v             : Verbose.
+  -png           : Generate png image outputs.
+
+Last updated: September 24, 2014
+
+EOF
+    exit 1
+}
+
+# TODO: output to log file
+# TODO: assign each lesion a unique number
+
+[ -z "$2" ] && Usage
+
+###################################
+# default values / initialization
+###################################
+t2_brain=""
+verbose=0
+png=0
+wmthr=0.7
+midline=4
+midmax=9
+do2fast=1
+
+###################################
+# read inputs
+###################################
+failed=0
+while [ -n "$1" ]
+do
+    if [ $1 = "-in" ]; then
+        t2_brain=$2
+        shift 2
+    elif [ $1 = "-v" ]; then
+        verbose=1
+        shift
+    elif [ $1 = "-png" ]; then
+        png=1
+        shift
+    elif [ $1 = "-wmthr" ]; then
+        wmthr=$2
+        shift 2
+    elif [ $1 = "-midline" ]; then
+        midline=$2
+        shift 2
+    elif [ $1 = "-midmax" ]; then
+        midmax=$2
+        shift 2
+    elif [ $1 = "-no2fast" ]; then
+        do2fast=0
+        shift
+    else
+        echo "ERROR: $1 is not a valid parameter"
+        failed=1
+        shift
+    fi
+done
+
+
+###################################
+# validate input
+###################################
+if [ -z "$NWTOOLS" ]; then
+    echo "ERROR: environment variable NWTOOLS not set."
+    failed=1
+fi
+if [ -z "$FSLDIR" ]; then
+    echo "ERROR: environment variable FSLDIR not set."
+    failed=1
+fi
+if [ -z "$t2_brain" ]; then
+    echo "ERROR: input image must be specified using -in <FLAIR image>"
+    failed=1
+fi
+if [ `imtest $t2_brain` = 0 -a -n "$t2_brain" ]; then
+    echo "ERROR: $t2_brain (input image) is not a valid image"
+    failed=1
+fi
+
+if [ $verbose = 1 ]; then
+    echo "in=$t2_brain"
+    echo "png=$png"
+    echo "wmthr=$wmthr"
+    echo "midline=$midline"
+fi
+
+if [ $failed = 1 ]; then
+    echo "Exiting"
+    exit 1
+fi
+
+# TODO: validate wmthr, midmax, and midline parameters
+
+###################################
+# begin computation
+###################################
+
+starttime=$(date +%s)
+totaltime=0
+incrementtime=0
+echo "marker,time increment(s),time total(s)" > timing.log
+echo "begin,$incrementtime,$totaltime" >> timing.log
+
+# apply smoothing to eliminate hyperintense single voxels resulting from noise
+if [ ! -e t2_smooth.nii.gz ]; then
+${FSLDIR}/bin/fslmaths $t2_brain -s 0.5 t2_smooth #TODO try without this. Detrimental to FNIRT???
+fi
+now=$(date +%s)
+incrementtime=$(expr $now - $totaltime - $starttime)
+totaltime=$(expr $now - $starttime)
+echo "smooth_complete,$incrementtime,$totaltime" >> timing.log
+
+# brain / nonbrain segmentation
+# hyperintensities are classified as nonbrain
+if [ ! -e t2_seg_1.nii.gz ]; then #TODO incomplete list of necessary FAST outputs
+${FSLDIR}/bin/fast -n 2 -t 2 -g -p -B -o t2 t2_smooth
+
+now=$(date +%s)
+incrementtime=$(expr $now - $totaltime - $starttime)
+totaltime=$(expr $now - $starttime)
+echo "fast_complete,$incrementtime,$totaltime" >> timing.log
+
+fi
+t2_brain_mask="t2_seg_0.nii.gz"
+t2_nonbrain_mask="t2_seg_1.nii.gz"
+t2_brain="t2_restore.nii.gz"
+if [ ! -e t2_nonbrain.nii.gz ]; then
+${FSLDIR}/bin/fslmaths $t2_brain -mas $t2_nonbrain_mask t2_nonbrain
+
+now=$(date +%s)
+incrementtime=$(expr $now - $totaltime - $starttime)
+totaltime=$(expr $now - $starttime)
+echo "t2_nonbrain_masking_complete,$incrementtime,$totaltime" >> timing.log
+
+fi
+
+# Now, t2_nonbrain includes only very dark nonbrain and very bright hyperintensities, and nothing in-between.
+# It is very easy to find a threshold to separate these using the histogram.
+# The following code accomplishes this by iteratively removing the first div until an empty div is found.
+numdivs=50
+range=$(fslstats t2_nonbrain -R)
+min=$(echo $range | cut -d' ' -f1)
+max=$(echo $range | cut -d' ' -f2)
+width=$(echo "scale=6; ($max - $min) / $numdivs" | bc)
+div=0
+${FSLDIR}/bin/fslstats t2_nonbrain -H $numdivs $min $max > histogram.txt
+histogram=$(cat histogram.txt)
+intensity=0
+tail -n +2 histogram.txt > histogram_nonzero.txt
+rm -f intensities.txt
+while [ "$(echo "scale=0; ($max - $intensity)/1" | bc)" -gt 0 ]
+do
+    intensity=$(echo "scale=6; $intensity + $width" | bc)
+    echo $intensity >> intensities.txt
+done
+paste -d',' intensities.txt histogram_nonzero.txt > histogram_both_axis.txt #TODO
+while [ "$(echo $histogram | cut -d " " -f 1 | cut -d "." -f 1)" -gt 0 ]  
+do
+    histogram=$(echo $histogram | cut -d " " -f 2-)
+    div=`expr $div + 1`
+done
+thresh=$(echo "$div * $width" | bc)
+echo $thresh > thresh.txt
+echo "thresh $thresh"
+${FSLDIR}/bin/fslmaths t2_nonbrain -thr $thresh t2_nonbrain_thr
+
+now=$(date +%s)
+incrementtime=$(expr $now - $totaltime - $starttime)
+totaltime=$(expr $now - $starttime)
+echo "histogram_thresholding_complete,$incrementtime,$totaltime" >> timing.log
+
+# do additional fast step to remove relatively dark nonlesion midbrain structures that are included
+# this makes identification of the lesions themselves less sensitive but more specific
+if [ ! $dofast = 1 ]; then
+    ${FSLDIR}/bin/fast -p -n 2 -g -N t2_nonbrain_thr #TODO -p is temporary #TODO consider using -p for higher specificity
+    ${FSLDIR}/bin/imcp t2_nonbrain_thr_seg_1 lesionmapT2
+else
+    ${FSLDIR}/bin/imcp t2_nonbrain_thr lesionmapT2
+fi
+
+now=$(date +%s)
+incrementtime=$(expr $now - $totaltime - $starttime)
+totaltime=$(expr $now - $starttime)
+echo "secondary_fast_complete,$incrementtime,$totaltime" >> timing.log
+
+pseudolesionvol=$(fslstats t2_nonbrain_thr -V | cut -d' ' -f2) # This is all erroneously labeled as nonbrain. Even if we don't end up calling it all lesion, we still do want to include it in our brain volume calculation later.
+
+# The process so far leaves us with some false positive results in the midbrain.
+# Here, we use standard space masking to restrict results to cerebral white matter.
+# The standard is a pseudo-FLAIR image created by replacing CSF of the T2 MNI-ICBM standard with CSF from the T1 standard.
+# This is a computationally-intensive step, and so it may be disabled via command line flags if desired.
+if [ ! $wmthr = -1 ]; then
+    if [ ! -e "MNItoT2.mat" ]; then
+        ${FSLDIR}/bin/flirt -in $NWTOOLS/icbm152_flair_brain -ref $t2_brain -omat MNItoT2.mat
+        
+        now=$(date +%s)
+        incrementtime=$(expr $now - $totaltime - $starttime)
+        totaltime=$(expr $now - $starttime)
+        echo "flirt_complete,$incrementtime,$totaltime" >> timing.log
+
+    fi
+    if [ ! -e "MNItoT2warp.nii.gz" ]; then
+        ${FSLDIR}/bin/fnirt --in=${NWTOOLS}/icbm152_flair_brain --ref=$t2_brain --aff=MNItoT2.mat --cout=MNItoT2warp --iout=MNIinT2warped
+        
+        now=$(date +%s)
+        incrementtime=$(expr $now - $totaltime - $starttime)
+        totaltime=$(expr $now - $starttime)
+        echo "fnirt_complete,$incrementtime,$totaltime" >> timing.log
+
+    fi
+
+    if [ `imtest wmt2` = 0 ]; then
+        ${FSLDIR}/bin/applywarp -i ${NWTOOLS}/icbm152_whitematter_mask -o wmt2 -r $t2_brain -w MNItoT2warp
+        
+        now=$(date +%s)
+        incrementtime=$(expr $now - $totaltime - $starttime)
+        totaltime=$(expr $now - $starttime)
+        echo "applywarp_complete,$incrementtime,$totaltime" >> timing.log
+
+    fi
+    ${FSLDIR}/bin/fslmaths wmt2 -thr $wmthr -bin -fillh wmt2_thr
+    ${FSLDIR}/bin/fslmaths lesionmapT2 -mas wmt2_thr lesionmapT2wm
+    
+    now=$(date +%s)
+    incrementtime=$(expr $now - $totaltime - $starttime)
+    totaltime=$(expr $now - $starttime)
+    echo "wm_thresholding_complete,$incrementtime,$totaltime" >> timing.log
+
+    # fill back any lesions that may have been partially removed by masking
+    if [ `imtest lesionmapT2wm_filled` = 0 ]; then #TODO reinstate if block
+        ${NWTOOLS}/fill_nw lesionmapT2wm t2_nonbrain_thr lesionmapT2wm_filled
+        
+        now=$(date +%s)
+        incrementtime=$(expr $now - $totaltime - $starttime)
+        totaltime=$(expr $now - $starttime)
+        echo "fill_nw_complete,$incrementtime,$totaltime" >> timing.log
+
+    fi
+
+    # Now, we need to get rid of some more midline false positives such as in the septum pellucidum. 
+    # Mask lesion mask, selecting midline saggital voxels.
+    # Fill in lesions that are contiguous with this selection. Subtract from final lesion mask.
+    # TODO: is midline7 too wide? Maybe 3 or 5 would be better?
+    if [ ! $midline = -1 ]; then
+        # First, create midline mask
+        midline_width=$(echo "scale=0; ($midline * 2) + 1" | bc)
+        ${FSLDIR}/bin/fslcreatehd $midline_width 233 189 1 1 1 1 1 0 0 0 2 yz_mid
+        ${FSLDIR}/bin/fslmaths yz_mid -add 1 yz_mid
+        pad=$(echo "scale=0; (197 - $midline_width)/2" | bc)
+        ${FSLDIR}/bin/fslcreatehd $pad 233 189 1 1 1 1 1 0 0 0 2 yz_pad
+        ${FSLDIR}/bin/fslmerge -x midline yz_pad yz_mid yz_pad
+        # Now, use the midline mask to select and fill midline lesions, then remove them from final mask
+        ${FSLDIR}/bin/applywarp -i midline -o midlinet2 -r $t2_brain -w MNItoT2warp
+        ${FSLDIR}/bin/fslmaths midlinet2 -thr 0.5 midlinet2
+        ${FSLDIR}/bin/fslmaths t2_nonbrain_thr -mas midlinet2 lesions_midline
+        if [ ! $midmax = -1 ]; then
+            # As above, first step is to create a midline mask
+            midline_width=$(echo "scale=0; ($midmax * 2) + 1" | bc)
+            ${FSLDIR}/bin/fslcreatehd $midline_width 233 189 1 1 1 1 1 0 0 0 2 yz_mid
+            ${FSLDIR}/bin/fslmaths yz_mid -add 1 yz_mid
+            pad=$(echo "scale=0; (197 - $midline_width)/2" | bc)
+            ${FSLDIR}/bin/fslcreatehd $pad 233 189 1 1 1 1 1 0 0 0 2 yz_pad
+            ${FSLDIR}/bin/fslmerge -x midmax yz_pad yz_mid yz_pad
+            ${FSLDIR}/bin/applywarp -i midmax -o midmaxt2 -r $t2_brain -w MNItoT2warp
+            ${FSLDIR}/bin/fslmaths midmaxt2 -thr 0.5 midmaxt2
+            ${FSLDIR}/bin/fslmaths t2_nonbrain_thr -mas midmaxt2 lesions_midmax
+        else
+            ${FSLDIR}/bin/imcp t2_nonbrain_thr lesions_midmax
+        fi
+        
+        now=$(date +%s)
+        incrementtime=$(expr $now - $totaltime - $starttime)
+        totaltime=$(expr $now - $starttime)
+        echo "midline_mask_created,$incrementtime,$totaltime" >> timing.log
+
+        ${NWTOOLS}/fill_nw lesions_midline lesions_midmax lesions_midline #TODO check if already done
+        
+        now=$(date +%s)
+        incrementtime=$(expr $now - $totaltime - $starttime)
+        totaltime=$(expr $now - $starttime)
+        echo "midline_mask_fill_nw_complete,$incrementtime,$totaltime" >> timing.log
+
+        ${FSLDIR}/bin/fslmaths lesions_midline -binv lesions_midline_inv
+        ${FSLDIR}/bin/fslmaths lesionmapT2wm_filled -mas lesions_midline_inv lesionmapT2
+    else
+        ${FSLDIR}/bin/immv lesionmapT2wm_filled lesionmapT2
+    fi
+fi
+
+now=$(date +%s)
+incrementtime=$(expr $now - $totaltime - $starttime)
+totaltime=$(expr $now - $starttime)
+echo "mapping_complete,$incrementtime,$totaltime" >> timing.log
+
+# Extract metrics from lesion map
+lesionvol=$(fslstats lesionmapT2 -V | cut -d' ' -f2)
+brainvol=$(fslstats $t2_brain_mask -V | cut -d' ' -f2)
+brainvol=$(echo "scale=6; $pseudolesionvol + $brainvol" | bc)
+lesionnorm=$(echo "scale=6; $lesionvol * 100 / $brainvol" | bc)
+
+echo "lesion volume (mm^2),lesion volume (% brain volume),brain volume (mm^2)" > lesionstats.csv
+echo "${lesionvol},${lesionnorm},${brainvol}" >> lesionstats.csv
+
+now=$(date +%s)
+incrementtime=$(expr $now - $totaltime - $starttime)
+totaltime=$(expr $now - $starttime)
+echo "metrics_complete,$incrementtime,$totaltime" >> timing.log
+
+# generate html and images useful for quality control
+if [ $png = 1 ]; then
+    ${FSLDIR}/bin/fslhd -x $t2_brain > hd.xml
+    rm -f thresh.nii.gz
+    ${FSLDIR}/bin/fslcreatehd hd.xml thresh
+    ${FSLDIR}/bin/fslmaths $t2_brain -bin -mul -1 -add 1 brain_mask
+    ${FSLDIR}/bin/fslmaths thresh -add $(cat thresh.txt) -mas brain_mask thresh
+    ${FSLDIR}/bin/fslmaths $t2_brain -add thresh thresh
+    ${FSLDIR}/bin/overlay 0 1 thresh -a t2_nonbrain_thr_seg 0.9 2.1 lesionmapT2 0.9 1.1 overlay.nii.gz 
+    ${FSLDIR}/bin/fslroi overlay overlay_cropped $(fslstats $t2_brain -w)
+    ${NWTOOLS}/slicer_nw -in overlay_cropped.nii.gz -out lesions
+    html="<table><tr><td>lesion volume (mm^2)</td><td>$lesionvol</td></tr>"
+    html+="<tr><td>lesion volume (% brain volume)</td><td>$lesionnorm</td></tr>"
+    html+="<tr><td>brain volume (mm^2)</td><td>$brainvol</td></tr></table><br />"
+    html+="<img src=\"$(pwd -P)/lesions45.png\"><br />"
+    echo $html > lesions.html
+    
+    now=$(date +%s)
+    incrementtime=$(expr $now - $totaltime - $starttime)
+    totaltime=$(expr $now - $starttime)
+    echo "png_complete,$incrementtime,$totaltime" >> timing.log
+
+fi
