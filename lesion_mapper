@@ -206,7 +206,7 @@ echo "histogram_thresholding_complete,$incrementtime,$totaltime" >> timing.log
 
 # do additional fast step to remove relatively dark nonlesion midbrain structures that are included
 # this makes identification of the lesions themselves less sensitive but more specific
-if [ ! $dofast = 1 ]; then
+if [ $do2fast = 1 ]; then
     ${FSLDIR}/bin/fast -p -n 2 -g -N t2_nonbrain_thr #TODO -p is temporary #TODO consider using -p for higher specificity
     ${FSLDIR}/bin/imcp t2_nonbrain_thr_seg_1 lesionmapT2
 else
@@ -349,7 +349,7 @@ if [ $png = 1 ]; then
     ${FSLDIR}/bin/fslmaths $t2_brain -bin -mul -1 -add 1 brain_mask
     ${FSLDIR}/bin/fslmaths thresh -add $(cat thresh.txt) -mas brain_mask thresh
     ${FSLDIR}/bin/fslmaths $t2_brain -add thresh thresh
-    ${FSLDIR}/bin/overlay 0 1 thresh -a t2_nonbrain_thr_seg 0.9 2.1 lesionmapT2 0.9 1.1 overlay.nii.gz 
+    ${FSLDIR}/bin/overlay 0 1 thresh -a lesionmapT2 0.9 1.1 overlay.nii.gz 
     ${FSLDIR}/bin/fslroi overlay overlay_cropped $(fslstats $t2_brain -w)
     ${NWTOOLS}/slicer_nw -in overlay_cropped.nii.gz -out lesions
     html="<table><tr><td>lesion volume (mm^2)</td><td>$lesionvol</td></tr>"
