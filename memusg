@@ -1,0 +1,67 @@
+#!/usr/bin/env bash
+# memusg -- Measure memory usage of processes
+# Usage: memusg [-out <outfile>] <command>
+#
+# TODO update header
+# Author: Jaeho Shin <netj@sparcs.org>
+# Created: 2010-08-16
+set -um
+ 
+# check input
+[ $# -gt 0 ] || { sed -n '2,/^#$/ s/^# //p' <"$0"; exit 1; }
+ 
+outfile="memusg.csv"
+if [ $1 = "-out" ]
+then
+    outfile=$2
+    shift 2
+fi
+
+cmd="$@"
+
+#cmd="${cmd/"\""/"\\\""}"
+
+echo "memusg running with cmd=$cmd" > temp.txt
+
+pgid=`ps -o pgid= $$`
+ 
+# detect operating system and prepare measurement
+case `uname` in
+    Darwin|*BSD) sizes() { /bin/ps -o rss= -g $1; } ;;
+    Linux) sizes() { /bin/ps -o rss= -$1; } ;;
+    *) echo "`uname`: unsupported operating system" >&2; exit 2 ;;
+esac
+ 
+# monitor the memory usage in the background.
+(
+peak=0
+done=
+trap "done=1" SIGTERM SIGINT
+while sizes=`sizes $pgid`
+do
+    set -- $sizes
+    sample=$((${@/#/+}))
+    let peak="sample > peak ? sample : peak"
+    sleep 0.1
+    [[ -n $done ]] && break
+done
+#echo "memusg: peak=$peak" >&2
+peakgb=`expr $peak / 1048576`
+#threads=`expr 32 / $peakgb`
+if [ ! -s $outfile ]; then
+    #echo -e "cmd\tkb\tgb\tthreads" >> memusg.txt
+    echo -e "cmd,kb,gb" >> $outfile
+fi
+#echo -e "$cmdprint\t$peak\t$peakgb\t$threads" >> memusg.txt
+echo -e "$cmd,$peak,$peakgb" >> $outfile #TODO add path context
+echo "$peak"
+) &
+monpid=$!
+ 
+echo "#!/bin/bash" > memusg_tmp.sh
+echo "$@" >> memusg_tmp.sh
+echo "kill -s SIGTERM $monpid" >> memusg_tmp.sh
+echo "rm memusg_tmp.sh" >> memusg_tmp.sh
+chmod u+x memusg_tmp.sh
+exec "./memusg_tmp.sh" # this is really ugly--there has to be a better way
+

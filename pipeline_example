@@ -1,0 +1,61 @@
+#!/bin/bash
+
+echo "running pipeline"
+
+homedir=$(pwd)
+args="lm_study_list.txt "
+#args="Js* TheraStride* Exert* METS* " #args="METS_[0-9][0-9]_[0-9][0-9][0-9][0-9][0-9][0-9] "
+#args="METS_30_012313 "
+#args="METS_30_012313 METS_22_040913 METS_01_062912 METS_10_071012 "
+#args="METS_01_062912 "
+#args+="-test "
+args+="-numthreads auto -memory 32 -maxthreads 24 -analysis Analyze -v"
+#args=$subs+$args
+
+nwpipe "dcm2nii -m N ../SPACE" \
+    $args -numthreads 1 \
+    -in ../SPACE -out ../SPACE/o*.nii.gz
+nwpipe "unbias T2.nii.gz" \
+    $args -outdir unbiased \
+    -in ../SPACE/o*.nii.gz T2.nii.gz \
+    -out T2_unbiased.nii.gz
+nwpipe "unbias T1.nii.gz" \
+    $args -outdir unbiased \
+    -in ../MPRAGE/o*.nii.gz T1.nii.gz \
+    -out T1_unbiased.nii.gz
+nwpipe "bet_nw ../unbiased/T2 t2_brain -R -png -d -s -m -f 0.4 -g -0.2" \
+    $args -outdir bet_notunbiased \
+    -in unbiased/T2.nii.gz \
+    -out t2_brain.nii.gz
+nwpipe "${NWTOOLS}/lesion_mapper -in ../bet_notunbiased/t2_brain.nii.gz -v -png -no2fast" \
+    $args -outdir lesions_no2fast \
+    -in bet_notunbiased/t2_brain.nii.gz \
+    -out lesionmapT2.nii.gz \
+    -out lesionstats.csv \
+    -out lesions45.png
+#nwpipe "${NWTOOLS}/lesion_mapper -in ../bet_notunbiased/t2_brain.nii.gz -v -png -no2fast" \
+#    $args -outdir lesions_no2fast \
+#    -in bet_notunbiased/t2_brain.nii.gz \
+#    -in lesions8/t2_smooth.nii.gz t2_smooth.nii.gz \
+#    -in lesions8/t2_seg_1.nii.gz t2_seg_1.nii.gz \
+#    -in lesions8/t2_seg_0.nii.gz t2_seg_0.nii.gz \
+#    -in lesions8/t2_restore.nii.gz t2_restore.nii.gz \
+#    -in lesions8/MNItoT2.mat MNItoT2.mat \
+#    -in lesions8/MNItoT2warp.nii.gz MNItoT2warp.nii.gz \
+#    -in lesions8/wmt2.nii.gz wmt2.nii.gz \
+#    -out lesionmapT2.nii.gz \
+#    -out lesionstats.csv \
+#    -out lesions45.png
+nwpipe "bet_nw ../unbiased/T1_unbiased.nii.gz I_brain -IN2 ../unbiased/T2_unbiased.nii.gz -png -d -s -m -f 0.4 -g -0.2" \
+    $args -outdir bet_multispectral \
+    -in unbiased/T1_unbiased.nii.gz \
+    -in unbiased/T2_unbiased.nii.gz \
+    -out bet9.png
+nwpipe "sienax_nw ../unbiased/T1_unbiased.nii.gz -o . -in2 ../unbiased/T2_unbiased.nii.gz -d -betdir ../bet_multispectral -lmt2 ../lesions_no2fast/lesionmapT2.nii.gz -nossm -S \"-N\"" \
+    $args -outdir sienax_no2fast \
+    -in unbiased/T1_unbiased.nii.gz \
+    -in unbiased/T2_unbiased.nii.gz \
+    -in lesions_no2fast/lesionmapT2.nii.gz \
+    -out report.html \
+    -out volumes.txt
+

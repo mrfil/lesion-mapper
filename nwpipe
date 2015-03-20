@@ -1,0 +1,377 @@
+#!/bin/bash
+
+#TODO blacklist failed subjects?
+#TODO option to symlink dependencies instead of copying
+
+Usage() {
+    cat <<EOF
+nwpipe - A tool for pipelining together multiple tasks in 
+  processing subject data. A call to this script represents a single stage
+  within a larger pipeline.
+
+Nate Wetter <nwetter2@illinois.edu>
+Brad Sutton <bsutton@illinois.edu>
+Magnetic Resonance Functional Imaging Lab <mrfil.bioen.illinois.edu>
+University of Illinois at Urbana-Champaign <illinois.edu>
+
+Usage: nwpipe <cmd> <subject(s)> [options]
+  <cmd> : The command to run on each subject. It needs to be enclosed in 
+    double quotes. The command will be run in the context of the output 
+    directory, so any paths should be relative to there. 
+    Known issue: wildcards within cmd may break "-numthreads auto".
+  <subject(s)> : One or more names of subject directories, separated by
+    spaces. Globbing is supported. Alternatively, this can be the name of a
+    text file that contains all the names. Making a file called
+    "nwpipe_exclude" in a subject directory will remove that subject from 
+    analysis.
+Options:
+  -numthreads <number | auto> : The number of separate processes to run
+    multiple subjects in parallel. If "auto" is specified, the number of
+    threads will be determined based on the memory requirements of the 
+    command, which will be determined automatically. In this case, -memory 
+    is required. Defaults to "1".
+  -memory <number> : The amount of memory to allow the pipeline to use when
+    -numthreads is set to "auto".
+  -maxthreads <number> : The maximum number of threads to use when 
+    -numthreads is set to "auto".
+  -analysis <path> : A path relative to the subject directory where all 
+    analysis output directories reside. Defaults to ".".
+  -outdir <path> " A subdirectory of the analysis directory where the 
+    output of this pipeline stage will go. Defaults to ".".
+  -in <source> [destination] : Existence of each <source> will be verified 
+    for each subject before running. If [destination] is specified, the
+    file will be copied there. <source> is relative to the analysis
+    directory, while [destination] is relative to the output directory.
+    Multiple -in parameters may be specified.
+  -out <file> : Relative to the output directory. Before running each 
+    subject, existence will indicate that the subject was already run, and
+    it will not be repeated. After running a subject, existence will 
+    indicate success. Multiple -out parameters may be specified.
+  -v : Verbose. Print more information.
+  -test : Instead of running <cmd>, make fake -out files. Good for making
+    sure all -in and -out files match up between successive nwpipe calls. 
+    Known issue: If -out contains directory structure, that structure will need
+    to be created manually.
+
+EOF
+    exit 1
+}
+
+[ -z "$2" ] && Usage
+###################################
+# default values / initialization
+###################################
+numthreads=1
+memamount=""
+maxthreads=""
+analysisdir="."
+outdir="."
+todo=()
+done=()
+tonotdo=()
+excluded=()
+depsource=()
+depdest=()
+outfile=()
+sublist=()
+verbose=0
+
+###################################
+# read inputs
+###################################
+#TODO optional input files
+cmd=$1
+shift
+
+while [[ ! $1 = -* && -n "$1" ]]
+do
+    sublist+=($1)
+    shift
+done
+
+while [ -n "$1" ]
+do
+    if [ $1 = "-numthreads" ]; then
+        numthreads=$2
+        shift 2
+    elif [ $1 = "-memory" ]; then
+        memamount=$2
+        shift 2
+    elif [ $1 = "-maxthreads" ]; then
+        maxthreads=$2
+        shift 2
+    elif [ $1 = "-analysis" ]; then
+        analysisdir=$2
+        shift 2
+    elif [ $1 = "-outdir" ]; then
+        outdir=$2
+        shift 2
+    elif [ $1 = "-in" ]; then
+        depsource+=($2)
+        shift 2
+        if [[ ! $1 = -* ]] && [[ -n "$1" ]]; then
+            depdest+=($1)
+            shift
+        else
+            depdest+=("-nocopy")
+        fi
+    elif [ $1 = "-out" ]; then
+        outfile+=($2)
+        shift 2
+    elif [ $1 = "-v" ]; then
+        verbose=1
+        shift
+    elif [ $1 = "-test" ]; then
+        unset $sublist
+        sublist="nwpipe_test_subject"
+        shift
+    fi
+done
+
+if [ ! -d ${sublist[0]} ]; then
+    sublist=$(cat ${sublist[0]})
+fi
+
+if [ $sublist = "nwpipe_test_subject" ]; then
+    if [ ! -d $sublist ]; then
+        mkdir $sublist
+    fi
+    if [ ! -d $sublist/$analysisdir ]; then
+        mkdir $sublist/$analysisdir
+    fi
+fi
+
+#TODO validate input
+
+###################################
+# print parameters
+###################################
+echo "nwpipe - beginning stage"
+echo "command: $cmd"
+if [ $verbose = 1 ]; then
+    echo "subjects ($(echo ${sublist[@]} | wc -w)): $(echo ${sublist[@]} | tr '\n' ' ')"
+    echo "number of threads: $numthreads"
+    if [ -n "$memamount" ]; then
+        echo "memory to use: $memamount gb"
+    fi
+    if [ -n "$maxthreads" ]; then
+        echo "max threads: $maxthreads"
+    fi
+    if [ ! $analysisdir = "." ]; then
+        echo "analysis directory: $analysisdir"
+    fi
+    if [ ! $outdir = "." ]; then
+        echo "output directory: $outdir"
+    fi
+    if [ ${#depsource[@]} -gt 0 ]; then
+        echo "dependencies:"
+        i=0
+        for dep in ${depsource[@]}
+        do
+            echo "  $dep --> ${depdest[i]}"
+            i=$[i+1]
+        done
+    fi
+    if [ ${#outfile[@]} -gt 0 ]; then
+        echo "outputs: ${outfile[@]}"
+    fi
+    echo ""
+fi
+
+###################################
+# check each subject
+###################################
+for sub in ${sublist[@]}
+do
+    willdo=true
+    cantdo=false
+    
+    # is subject excluded?
+    if [ -e "${sub}/nwpipe_exclude" ]; then
+        excluded+=($sub)
+    else
+        # is subject already complete?
+        if [ ${#outfile[@]} -gt 0 ]; then
+            willdo=false
+        fi
+        for out in ${outfile[@]}
+        do 
+            if [ ! -e $sub/$analysisdir/$outdir/$out ]; then
+            #TODO above line generates errors when globbing returns multiple files. Using quotes around path or [[ removes globbing support.
+                willdo=true
+            fi
+        done
+        if [ $willdo = false ]; then
+            done+=($sub)
+        fi
+
+        # does subject have required dependencies?
+        for file in ${depsource[@]}
+        do
+            if [ ! -e $sub/$analysisdir/$file ] #TODO allow processing to proceed if depsource is not available but depdest is. be sure to not try copying it over.
+            then
+                willdo=false
+                cantdo=true
+            fi
+        done
+
+        if $willdo
+        then
+            todo+=($sub)
+        fi
+
+        if $cantdo
+        then
+            tonotdo+=($sub)
+        fi
+    fi
+done
+
+echo "subjects already completed (${#done[@]}): ${done[@]}"
+echo "subjects excluded (${#excluded[@]}): ${excluded[@]}"
+echo "subjects missing dependencies (${#tonotdo[@]}): ${tonotdo[@]}"
+echo "subjects that will run (${#todo[@]}): ${todo[@]}"
+echo ""
+
+if [ ${#todo[@]} = 0 ]
+then
+    echo "Nothing to do! Exiting."
+    echo ""
+    exit ${#tonotdo[@]}
+fi
+
+###################################
+# set up dependencies
+###################################
+echo "copying inputs"
+for sub in ${todo[@]}
+do
+    if [ ! -d $sub/$analysisdir/$outdir ]
+    then
+        mkdir $sub/$analysisdir/$outdir
+    fi
+    
+    i=0
+    for file in ${depsource[@]}
+    do
+        if [ ! ${depdest[i]} = "-nocopy" ] && [ ! -e $sub/$analysisdir/$outdir/${depdest[i]} ]
+        then
+            cp $sub/$analysisdir/$file $sub/$analysisdir/$outdir/${depdest[i]}
+        fi
+        let "i=$i+1"
+    done
+done
+
+###################################
+# if in testing mode, generate fake output instead of continuing
+###################################
+if [ $sublist = "nwpipe_test_subject" ]; then
+    for out in ${outfile[@]}
+    do  
+        touch $sub/$analysisdir/$outdir/$out 
+        #TODO allow for directory structure within $out
+    done                
+    exit
+fi
+
+###################################
+# determine memory requirements
+###################################
+cmd=$(echo $cmd | awk "{ gsub(\"%OUT\", \"%SUB/$analysisdir/$outdir\"); print }")
+cmd=$(echo $cmd | awk "{ gsub(\"%AN\", \"%SUB/$analysisdir\"); print }")
+
+if [ $numthreads = "auto" ]
+then
+    runmemusg=false
+    if [ ! -e "memusg.csv" ]
+    then
+        runmemusg=true
+    else
+        if [ $(grep -c "^$cmd," memusg.csv) = 0 ]
+        then
+            runmemusg=true
+        fi
+    fi
+
+    #memusg="" #TODO
+    cmdmem="${cmd//"\""/\\\"}" # add escape to double quotes
+    #echo "cmd=$cmd"
+    #echo "cmdmem=$cmdmem"
+    if [ $runmemusg = true ]
+    then
+        firstsub=${todo[0]}
+        unset todo[0]
+        #cmdrun=$cmd
+        #cmdprint=$cmd #TODO get rid of cmdprint / cmdrun
+        #cmdrun=$(echo $cmd | awk "{ gsub(\"%SUB\", \"$firstsub\"); print }")
+        #cmdrun=$(echo $cmd | awk "{ gsub(\"\\\"\", \"\"\\\"\"); print }")
+        #cmdrun="${cmdrun//"\""/\\\"}"
+        echo "Running subject $firstsub to determine memory requirements"
+        echo "cmd=$cmdmem"
+        homedir=$(pwd)
+        cd $firstsub/$analysisdir/$outdir
+        #TODO: following line doesn't work quite right. possibly eliminate $()
+        $(eval "memusg -out $homedir/memusg.csv \"$cmdmem\"")
+        cd $homedir
+        #echo "memusg $memusg"
+    fi
+    memamount=$((memamount * 1048576))
+    #cmdsearch=$(echo $cmd | tr -d '"')
+    #echo "grepping...$cmdmem"
+    memusg=$(grep -m 1 "^$cmdmem," memusg.csv | cut -d',' -f2)
+    if [ -z $memusg ]; then
+        echo "Memory usage determination failed. Exiting."
+        exit 1
+    fi
+    echo "memusg $memusg"
+    numthreads=$((memamount / memusg))
+    echo "enough memory for $numthreads threads"
+fi
+
+if [ ! -z $maxthreads ]
+then
+    if [ $numthreads -gt $maxthreads ]
+    then
+        numthreads=$maxthreads
+    fi
+fi
+
+###################################
+# run command
+###################################
+echo "Running ${#todo[@]} subjects with up to $numthreads threads"
+#todo=$(echo $todo | tr ' ' '\n') # translate spaces into newlines for better xarg compatibility
+if [ ${#todo[@]} -gt 0 ]
+then
+    eval "echo \"$( echo ${todo[@]} | tr ' ' '\n' )\" | xargs -P $numthreads -n 1 -I %SUB sh -c 'cd %SUB/$analysisdir/$outdir; $cmd; cd - >/dev/null'"
+else
+    echo "Nothing to do!"
+fi
+
+###################################
+# verify outputs
+###################################
+failedsubs=()
+completesubs=()
+for sub in ${sublist[@]}
+do
+    failed=false
+    for out in ${outfile[@]}
+    do
+        if [ ! -e $sub/$analysisdir/$outdir/$out ]; then
+            failed=true
+        fi
+    done
+    if [ $failed = true ]; then
+        failedsubs+=($sub)
+    else
+        completesubs+=($sub)
+    fi
+done
+
+echo ""
+echo "failed subjects (${#failedsubs[@]}): ${failedsubs[@]}"
+echo "complete subjects (${#completesubs[@]}): ${completesubs[@]}"
+echo ""
+exit ${#failedsubs[@]}
+
