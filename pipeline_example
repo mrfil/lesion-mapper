@@ -3,8 +3,8 @@
 echo "running pipeline"
 
 homedir=$(pwd)
-args="lm_study_list.txt "
-#args="Js* TheraStride* Exert* METS* " #args="METS_[0-9][0-9]_[0-9][0-9][0-9][0-9][0-9][0-9] "
+#args="lm_study_list.txt "
+args="Js* TheraStride* Exert* METS* " #args="METS_[0-9][0-9]_[0-9][0-9][0-9][0-9][0-9][0-9] "
 #args="METS_30_012313 "
 #args="METS_30_012313 METS_22_040913 METS_01_062912 METS_10_071012 "
 #args="METS_01_062912 "
