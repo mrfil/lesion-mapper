@@ -1,0 +1,101 @@
+#!/bin/sh
+
+#   unbias - estimates and corrects bias field
+#   Nathan Wetter (nwetter2@illinois.edu)
+#   Brad Sutton (bsutton@illinois.edu)
+#   Magnetic Resonance Functional Imaging Lab
+#   University of Illinois at Urbana-Champaign
+#   November 2013
+
+#   Derived from bet - credits below...
+
+#   Stephen Smith, FMRIB Image Analysis Group
+#   SIENA eye cleanup option by Marco Battaglini and Nicola De Stefano, Siena
+#
+#   Copyright (C) 2005-2012 University of Oxford
+#
+#   Part of FSL - FMRIB's Software Library
+#   http://www.fmrib.ox.ac.uk/fsl
+#   fsl@fmrib.ox.ac.uk
+#   
+#   Developed at FMRIB (Oxford Centre for Functional Magnetic Resonance
+#   Imaging of the Brain), Department of Clinical Neurology, Oxford
+#   University, Oxford, UK
+#   
+#   
+#   LICENCE
+#   
+#   FMRIB Software Library, Release 5.0 (c) 2012, The University of
+#   Oxford (the "Software")
+#   
+#   The Software remains the property of the University of Oxford ("the
+#   University").
+#   
+#   The Software is distributed "AS IS" under this Licence solely for
+#   non-commercial use in the hope that it will be useful, but in order
+#   that the University as a charitable foundation protects its assets for
+#   the benefit of its educational and research purposes, the University
+#   makes clear that no condition is made or to be implied, nor is any
+#   warranty given or to be implied, as to the accuracy of the Software,
+#   or that it will be suitable for any particular purpose or for use
+#   under any specific conditions. Furthermore, the University disclaims
+#   all responsibility for the use which is made of the Software. It
+#   further disclaims any liability for the outcomes arising from using
+#   the Software.
+#   
+#   The Licensee agrees to indemnify the University and hold the
+#   University harmless from and against any and all claims, damages and
+#   liabilities asserted by third parties (including claims for
+#   negligence) which arise directly or indirectly from the use of the
+#   Software or the sale of any products based on the Software.
+#   
+#   No part of the Software may be reproduced, modified, transmitted or
+#   transferred in any form or by any means, electronic or mechanical,
+#   without the express permission of the University. The permission of
+#   the University is not required if the said reproduction, modification,
+#   transmission or transference is done without financial return, the
+#   conditions of this Licence are imposed upon the receiver of the
+#   product, and all original and amended source code is included in any
+#   transmitted product. You may be held legally responsible for any
+#   copyright infringement that is caused or encouraged by your failure to
+#   abide by these terms and conditions.
+
+Usage() {
+    cat <<EOF
+
+unbias - estimates and corrects for bias field
+derived from FSL's BET by Nathan Wetter (nwetter2@illinois.edu)
+
+Usage:    unbias <input> [output]
+          default [output] is <input>_unbiased
+EOF
+    exit 1
+}
+
+[ "$1" = "" ] && Usage
+IN=`${FSLDIR}/bin/remove_ext $1`
+if [ "$2" = "" ] ; then
+   OUT="${IN}_unbiased"
+else
+   OUT=`${FSLDIR}/bin/remove_ext $2`
+fi
+
+if [ `${FSLDIR}/bin/imtest $IN` = 0 ] ; then
+   echo ""
+   echo "Error: input image $IN not valid"
+   echo ""
+   exit 1
+fi
+
+#### run betpremask
+${FSLDIR}/bin/standard_space_roi $IN ${OUT}_tmp_premask -b -d
+
+#### run FAST to get bias field
+${FSLDIR}/bin/fast -b ${OUT}_tmp_premask >/dev/null 2>&1
+
+#### apply bias correction to original
+${FSLDIR}/bin/fslmaths $IN -div ${OUT}_tmp_premask_bias $OUT
+
+rm ${OUT}_tmp*
+
+
