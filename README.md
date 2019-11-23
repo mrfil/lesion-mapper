@@ -1,4 +1,4 @@
-lesion_mapper - A tool for mappping white matter hyperintensities.
+lesion_mapper - A tool for mappping white matter hyperintensities. Publication at: Wetter, Hubbard, Motl, Sutton. Brain Behav. 2016 Jan 28;6(3):e00440. https://doi.org/10.1002/brb3.440 
 
 For research purposes only! Please see LICENSE.txt
 
