@@ -12,16 +12,19 @@ args="Js* TheraStride* Exert* METS* " #args="METS_[0-9][0-9]_[0-9][0-9][0-9][0-9
 args+="-numthreads auto -memory 32 -maxthreads 24 -analysis Analyze -v"
 #args=$subs+$args
 
-nwpipe "dcm2nii -m N ../SPACE" \
+nwpipe "dcm2niix -m N -x y -z y ../SPACE" \
     $args -numthreads 1 \
-    -in ../SPACE -out ../SPACE/o*.nii.gz
+    -in ../SPACE -out ../SPACE/*_Crop_1.nii.gz
 nwpipe "unbias T2.nii.gz" \
     $args -outdir unbiased \
-    -in ../SPACE/o*.nii.gz T2.nii.gz \
+    -in ../SPACE/*_Crop_1.nii.gz T2.nii.gz \
     -out T2_unbiased.nii.gz
+nwpipe "dcm2niix -m N -x y -z y ../MPRAGE" \
+    $args -numthreads 1 \
+    -in ../MPRAGE -out ../MPRAGE/*_Crop_1.nii.gz
 nwpipe "unbias T1.nii.gz" \
     $args -outdir unbiased \
-    -in ../MPRAGE/o*.nii.gz T1.nii.gz \
+    -in ../MPRAGE/*_Crop_1.nii.gz T1.nii.gz \
     -out T1_unbiased.nii.gz
 nwpipe "bet_nw ../unbiased/T2 t2_brain -R -png -d -s -m -f 0.4 -g -0.2" \
     $args -outdir bet_notunbiased \
