@@ -1,8 +1,10 @@
 #!/bin/sh
 
+#Usage: cleans out all results of pipeline_example except for dcm2niix outputs
+#Author: Paul B Camacho <pcamach2@illinois.edu>
+
 WorkDir=/path/to/dataDirectory
 
-#cleans out all results of pipeline_example except for dcm2niix outputs
 for SUB in 001 002 003 004 005
 do
 	cd ${WorkDir}/${SUB}/Analyze/unbiased
