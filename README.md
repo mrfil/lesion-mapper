@@ -7,6 +7,9 @@ Brad Sutton <bsutton@illinois.edu>
 Magnetic Resonance Functional Imaging Lab <mrfil.bioen.illinois.edu>
 University of Illinois at Urbana-Champaign <illinois.edu>
 
+Create the directory structure for each participant's data before running.
+  This can be achieved using file_structure.sh
+
 Use: lesion_mapper -in <FLAIR image> [options]
 
 Required parameters:
