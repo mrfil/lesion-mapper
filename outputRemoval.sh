@@ -6,13 +6,13 @@ WorkDir=/path/to/dataDirectory
 for SUB in 001 002 003 004 005
 do
 	cd ${WorkDir}/${SUB}/Analyze/unbiased
-    rm ./*
+	rm ./*
 	cd ${WorkDir}/${SUB}/Analyze/bet_notunbiased
 	rm ./*
-    cd ${WorkDir}/${SUB}/Analyze/lesions_no2fast
+	cd ${WorkDir}/${SUB}/Analyze/lesions_no2fast
 	rm ./*
-    cd ${WorkDir}/${SUB}/Analyze/bet_multispectral
+	cd ${WorkDir}/${SUB}/Analyze/bet_multispectral
 	rm ./*
-    cd ${WorkDir}/${SUB}/Analyze/sienax_no2fast
-    rm ./*
+	cd ${WorkDir}/${SUB}/Analyze/sienax_no2fast
+	rm ./*
 done
