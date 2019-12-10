@@ -1,5 +1,8 @@
 #!/bin/sh
 
+#Usage: Creates required directory structure for each subject in a list
+#Author: Paul B Camacho <pcamach2@illinois.edu>
+
 #run from subjects directory
 for SUB in 001 002 003 004 005
 do
