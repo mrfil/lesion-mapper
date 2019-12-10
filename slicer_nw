@@ -53,7 +53,7 @@ if [ -n "$overlaycmd" ]; then
     overlay $overlaycmd
 fi
     
-    overlay 0 0 T2_unbiased -a lesionmapT2 0.9 1.1  lesionmapT2 0.9 1.1 overlay
+    overlay 0 0 ../unbiased/T2_unbiased -a ../lesions_no2fast/lesionmapT2 0.9 1.1  lesionmapT2 0.9 1.1 overlay
     
     midx=$(fslstats $in -C | cut -d" " -f1 | cut -d"." -f1)
     for it in {1..18}; do
