@@ -46,7 +46,7 @@ if [ "$failed" = 1 ]; then
 fi
 
 # begin computation
-cluster --in=${mask} --thresh=0.5 -o ${mask}_cluster --no_table
+${FSLDIR}/bin/cluster --in=${mask} --thresh=0.5 -o ${mask}_cluster --no_table
 index_max=$(fslstats ${mask}_cluster -R | cut -d' ' -f2 | cut -d'.' -f1)
 index_cur=1
 while [ $index_cur -le $index_max ]
